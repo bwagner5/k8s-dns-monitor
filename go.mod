@@ -1,4 +1,4 @@
-module github.com/bwagner5/go-cli-template
+module github.com/bwagner5/k8s-dns-monitor
 
 go 1.20
 

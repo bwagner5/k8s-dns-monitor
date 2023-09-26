@@ -1,3 +1,3 @@
 FROM scratch
-ENTRYPOINT ["/go-cli-template"]
-COPY go-cli-template /
+ENTRYPOINT ["/k8s-dns-monitor"]
+COPY k8s-dns-monitor /

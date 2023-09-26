@@ -55,7 +55,7 @@ var (
 	globalOpts = GlobalOptions{}
 	rootOpts   = RootOptions{}
 	rootCmd    = &cobra.Command{
-		Use:     "go-cli-template",
+		Use:     "k8s-dns-monitor",
 		Version: version,
 		Run: func(cmd *cobra.Command, args []string) {
 			if rootOpts.Attribution {
