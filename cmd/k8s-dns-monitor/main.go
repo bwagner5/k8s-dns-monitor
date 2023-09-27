@@ -19,15 +19,22 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/bwagner5/k8s-dns-monitor/pkg/monitor"
 	"github.com/imdario/mergo"
 	"github.com/olekukonko/tablewriter"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -45,6 +52,7 @@ type GlobalOptions struct {
 	Version    bool
 	Output     string
 	ConfigFile string
+	Kubeconfig string
 }
 
 type RootOptions struct {
@@ -62,11 +70,22 @@ var (
 				fmt.Println(attribution)
 				os.Exit(0)
 			}
+			cfg, err := config.LoadDefaultConfig(cmd.Context())
+			if err != nil {
+				log.Fatalf("unable to load AWS SDK config, %s", err)
+			}
+			cwAPI := cloudwatch.NewFromConfig(cfg)
+			for {
+				if err := monitor.DNSTest(cmd.Context(), MustGetClientset(), cwAPI); err != nil {
+					log.Printf("Test FAIL: %s", err)
+				}
+				log.Println("Test SUCCEEDED")
+			}
 		},
 	}
 )
 
-//go:generate cp -r ../ATTRIBUTION.md ./
+//go:generate cp -r ../../ATTRIBUTION.md ./
 //go:embed ATTRIBUTION.md
 var attribution string
 
@@ -152,4 +171,26 @@ func PrettyTable[T any](data []T, wide bool) string {
 	table.AppendBulk(rows) // Add Bulk Data
 	table.Render()
 	return out.String()
+}
+
+func MustGetClientset() *kubernetes.Clientset {
+	// Setup K8s clientset
+	var k8sConfig *rest.Config
+	var err error
+	if globalOpts.Kubeconfig != "" {
+		k8sConfig, err = clientcmd.BuildConfigFromFlags("", globalOpts.Kubeconfig)
+		if err != nil {
+			log.Fatalf("Unable to create K8s clientset from kubeconfig: %s", err)
+		}
+	} else {
+		k8sConfig, err = rest.InClusterConfig()
+		if err != nil {
+			log.Fatalf("Unable to find in-cluster K8s config: %s\n", err)
+		}
+	}
+	clientset, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		log.Fatalf("Unable to create K8s clientset: %s", err)
+	}
+	return clientset
 }

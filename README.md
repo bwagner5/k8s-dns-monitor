@@ -1,14 +1,5 @@
 # k8s-dns-monitor
 
-k8s-dns-monitor provides a scaffold for a go CLI. It currently utilizes cobra and takes opinions on what github workflows exist and do as well as the Makefile including dev tooling like golangci and goreleaser.
-
-You can run the following commands to replace occurrences of `k8s-dns-monitor` with whatever your CLI is called:
-
-```
-find . -path ./.git -prune -o -print -exec sed -E -i.bak 's/k8s-dns-monitor/<FILL IN CLI NAME>/g' {} \;
-find . -name "*.bak" -type f -delete
-```
-
 **NOTE:** 
 goreleaser requires a personal access token to publish a homebrew formula to a tap in another repo since github action token are only valid for the repo it's running in. The personal access token should be named `MY_GITHUB_TOKEN` and have `repo` permissions.
 

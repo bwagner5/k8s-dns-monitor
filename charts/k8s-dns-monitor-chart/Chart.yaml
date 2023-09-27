@@ -1,0 +1,6 @@
+apiVersion: v2
+name: k8s-dns-monitor-chart
+description: A Helm chart for k8s-dns-monitor tooling
+type: application
+version: 0.1.10
+appVersion: 0.1.10

@@ -6,6 +6,9 @@ require (
 	github.com/golangci/golangci-lint v1.53.2
 	github.com/google/go-licenses v1.6.0
 	golang.org/x/vuln v0.1.0
+	github.com/google/ko v0.11.2
+	github.com/norwoodj/helm-docs/cmd/helm-docs v1.11.0
+	github.com/sigstore/cosign/cmd/cosign v1.13.1
 )
 
 require (

@@ -5,6 +5,8 @@ PREV_VERSION ?= $(shell git describe --abbrev=0 --tags `git rev-list --tags --sk
 GOOS ?= $(shell uname | tr '[:upper:]' '[:lower:]')
 GOARCH ?= $(shell [[ `uname -m` = "x86_64" ]] && echo "amd64" || echo "arm64" )
 GOPROXY ?= "https://proxy.golang.org|direct"
+KDM_DOCKER_REPO ?= ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+KDM_IAM_ROLE_ARN ?= arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CLUSTER_NAME}-k8s-dns-monitor
 
 $(shell mkdir -p ${BUILD_DIR})
 
@@ -16,8 +18,33 @@ goreleaser: ## Release snapshot
 	goreleaser build --snapshot --rm-dist
 
 .PHONY: build
-build: generate ## build binary using current OS and Arch
-	go build -a -ldflags="-s -w -X main.version=${VERSION}" -o ${BUILD_DIR}/k8s-dns-monitor-${GOOS}-${GOARCH} ${BUILD_DIR}/../cmd/*.go
+build: generate ## Build the controller image
+	$(eval CONTROLLER_IMG=$(shell $(WITH_GOFLAGS) ko build -B --platform=$(TARGET_PLATFORMS) -t $(VERSION) github.com/bwagner5/k8s-dns-monitor/cmd/k8s-dns-monitor))
+	$(eval CONTROLLER_TAG=$(shell echo ${CONTROLLER_IMG} | sed 's/.*k8s-dns-monitor://' | cut -d'@' -f1))
+	$(eval CONTROLLER_DIGEST=$(shell echo ${CONTROLLER_IMG} | sed 's/.*k8s-dns-monitor:.*@//'))
+	echo Built ${CONTROLLER_IMG}
+
+apply: build ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
+	helm upgrade --install k8s-dns-monitor charts/k8s-dns-monitor-chart --namespace k8s-dns-monitor --create-namespace \
+	$(HELM_OPTS) \
+	--set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${KDM_IAM_ROLE_ARN} \
+	--set image.repository=$(KO_DOCKER_REPO)/k8s-dns-monitor \
+	--set image.digest="$(CONTROLLER_DIGEST)"
+
+publish: verify build docs ## Build and publish container images and helm chart
+	aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${KO_DOCKER_REPO}
+	sed -i.bak "s|repository:.*|repository: $(KO_DOCKER_REPO)/k8s-dns-monitor|" charts/k8s-dns-monitor-chart/values.yaml
+	sed -i.bak "s|tag:.*|tag: ${CONTROLLER_TAG}|" charts/k8s-dns-monitor-chart/values.yaml
+	sed -i.bak "s|digest:.*|digest: ${CONTROLLER_DIGEST}|" charts/k8s-dns-monitor-chart/values.yaml
+	sed -i.bak "s|version:.*|version: $(shell echo ${CONTROLLER_TAG} | tr -d 'v')|" charts/k8s-dns-monitor-chart/Chart.yaml
+	sed -i.bak "s|appVersion:.*|appVersion: $(shell echo ${CONTROLLER_TAG} | tr -d 'v')|" charts/k8s-dns-monitor-chart/Chart.yaml
+	sed -E -i.bak "s|$(shell echo ${PREV_VERSION} | tr -d 'v' | sed 's/\./\\./g')([\"_/])|$(shell echo ${VERSION} | tr -d 'v')\1|g" README.md
+	rm -f *.bak charts/k8s-dns-monitor-chart/*.bak
+	helm package charts/k8s-dns-monitor-chart -d ${BUILD_DIR_PATH} --version "${VERSION}"
+	helm push ${BUILD_DIR_PATH}/k8s-dns-monitor-chart-${VERSION}.tgz "oci://${KO_DOCKER_REPO}"
+
+docs: ## Generate helm docs
+	helm-docs
 
 .PHONY: test
 test: ## run go tests and benchmarks
