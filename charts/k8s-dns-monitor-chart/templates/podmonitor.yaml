@@ -10,7 +10,7 @@ spec:
     - honorLabels: true
       interval: 15s
       path: /metrics
-      targetPort: 2112
+      targetPort: {{ .Values.metricsPort }}
       scheme: http
   selector:
     matchLabels:

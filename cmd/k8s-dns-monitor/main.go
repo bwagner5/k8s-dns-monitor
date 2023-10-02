@@ -20,15 +20,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
+	"net"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/bwagner5/k8s-dns-monitor/pkg/monitor"
 	"github.com/imdario/mergo"
 	"github.com/olekukonko/tablewriter"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -57,6 +63,7 @@ type GlobalOptions struct {
 
 type RootOptions struct {
 	Attribution bool
+	MetricsPort int
 }
 
 var (
@@ -75,11 +82,28 @@ var (
 				log.Fatalf("unable to load AWS SDK config, %s", err)
 			}
 			cwAPI := cloudwatch.NewFromConfig(cfg)
+			registry := prometheus.NewRegistry()
+			lo.Must0(monitor.RegisterMetrics(registry))
+			MustStartPromMetrics(registry, rootOpts.MetricsPort)
+			dnsTest := monitor.DNSTest{
+				CW:              cwAPI,
+				Clientset:       MustGetClientset(),
+				MetricsRegistry: registry,
+			}
+			// Chaos(cfg.Region, 5)
+			concurrentTests := 5
+			jobs := make(chan struct{}, concurrentTests)
 			for {
-				if err := monitor.DNSTest(cmd.Context(), MustGetClientset(), cwAPI); err != nil {
-					log.Printf("Test FAIL: %s", err)
-				}
-				log.Println("Test SUCCEEDED")
+				go func() {
+					if err := dnsTest.Run(cmd.Context()); err != nil {
+						log.Printf("Test FAIL: %s", err)
+					} else {
+						log.Println("Test SUCCEEDED")
+					}
+					<-jobs
+				}()
+				time.Sleep(1 * time.Second)
+				jobs <- struct{}{}
 			}
 		},
 	}
@@ -91,6 +115,7 @@ var attribution string
 
 func main() {
 	rootCmd.Flags().BoolVar(&rootOpts.Attribution, "attribution", false, "show attributions")
+	rootCmd.Flags().IntVar(&rootOpts.MetricsPort, "metrics-port", 8000, "port to expose prometheus /metrics")
 	rootCmd.PersistentFlags().BoolVar(&globalOpts.Verbose, "verbose", false, "Verbose output")
 	rootCmd.PersistentFlags().BoolVar(&globalOpts.Version, "version", false, "version")
 	rootCmd.PersistentFlags().StringVarP(&globalOpts.Output, "output", "o", OutputTableShort,
@@ -193,4 +218,36 @@ func MustGetClientset() *kubernetes.Clientset {
 		log.Fatalf("Unable to create K8s clientset: %s", err)
 	}
 	return clientset
+}
+
+// Chaos does a bunch of unique dns queries to clear the cache
+func Chaos(region string, concurrency int) {
+	log.Printf("Starting chaos queries to disrupt the cache in %s with a concurrency of %d", region, concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func(prefix int) {
+			for {
+				net.LookupIP(fmt.Sprintf("%d-%d.%s.compute.internal", prefix, rand.Int63(), region))
+			}
+		}(i)
+		log.Printf("Chaos %d started", i)
+	}
+	log.Printf("Chaos queries initialized")
+}
+
+func MustStartPromMetrics(registry *prometheus.Registry, port int) {
+	http.Handle("/metrics", promhttp.HandlerFor(
+		registry,
+		promhttp.HandlerOpts{EnableOpenMetrics: false},
+	))
+	srv := &http.Server{
+		ReadTimeout:       1 * time.Second,
+		WriteTimeout:      1 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 2 * time.Second,
+		Addr:              fmt.Sprintf(":%d", port),
+	}
+	log.Printf("Serving prometheus metrics at http://:%d/metrics", port)
+	go func() {
+		lo.Must0(srv.ListenAndServe())
+	}()
 }

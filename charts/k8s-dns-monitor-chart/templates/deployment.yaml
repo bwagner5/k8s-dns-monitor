@@ -33,7 +33,9 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           ports:
-            - containerPort: 2112
+            - name: http-metrics
+              containerPort: {{ .Values.metricsPort }}
+              protocol: TCP
           env:
             {{- toYaml .Values.env | nindent 12 }}
       {{- with .Values.nodeSelector }}

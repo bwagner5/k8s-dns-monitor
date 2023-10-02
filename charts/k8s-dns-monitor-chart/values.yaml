@@ -22,7 +22,15 @@ serviceAccount:
   name: "k8s-dns-monitor"
 
 podMonitor:
-  create: false
+  create: true
+
+serviceMonitor:
+  # -- Specifies whether a ServiceMonitor should be created.
+  enabled: true
+  # -- Additional labels for the ServiceMonitor.
+  additionalLabels: {}
+  # -- Endpoint configuration for the ServiceMonitor.
+  endpointConfig: {}
 
 podAnnotations: {}
 
@@ -47,6 +55,7 @@ nodeSelector:
 tolerations: []
 affinity: {}
 priorityClassName: ""
+metricsPort: 8000
 
 env:
   - name: PROMETHEUS_METRICS
