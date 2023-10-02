@@ -59,8 +59,8 @@ github.com/aws/aws-sdk-go-v2/service/sts v1.22.0 h1:s4bioTgjSFRwOoyEFzAVCmFmoowB
 github.com/aws/aws-sdk-go-v2/service/sts v1.22.0/go.mod h1:VC7JDqsqiwXukYEDjoHh9U0fOJtNWh04FPQz4ct4GGU=
 github.com/aws/smithy-go v1.14.2 h1:MJU9hqBGbvWZdApzpvoF2WAIJDbtjK2NDJSiJP7HblQ=
 github.com/aws/smithy-go v1.14.2/go.mod h1:Tg+OJXh4MB2R/uN61Ko2f6hTZwB/ZYGOtib8J3gBHzA=
-github.com/bwagner5/inflate v0.0.3 h1:DrZe1bLuB+jjizpwHUOjtmZbd2Ss3NSaaD573LQYjV4=
-github.com/bwagner5/inflate v0.0.3/go.mod h1:2nEJ1AOA/gR64v9V/yLwCW31gEU+9gFU9H/ny3CMm00=
+github.com/bwagner5/inflate v0.0.6 h1:HbSahyUsMxSDh830qNER99AZq3PG+Za420Gtmgf8pTM=
+github.com/bwagner5/inflate v0.0.6/go.mod h1:2nEJ1AOA/gR64v9V/yLwCW31gEU+9gFU9H/ny3CMm00=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWRnGsAI=
 github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=
