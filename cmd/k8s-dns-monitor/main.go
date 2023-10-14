@@ -24,14 +24,17 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"reflect"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/bwagner5/k8s-dns-monitor/pkg/monitor"
 	"github.com/imdario/mergo"
+	"github.com/jaypipes/envutil"
 	"github.com/olekukonko/tablewriter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -51,6 +54,8 @@ const (
 
 var (
 	version = ""
+	// handle graceful shutdown
+	exit = make(chan os.Signal, 1)
 )
 
 type GlobalOptions struct {
@@ -62,8 +67,10 @@ type GlobalOptions struct {
 }
 
 type RootOptions struct {
-	Attribution bool
-	MetricsPort int
+	Attribution     bool
+	MetricsPort     int
+	MetricsPrefix   string
+	ConcurrentTests int
 }
 
 var (
@@ -73,6 +80,7 @@ var (
 		Use:     "k8s-dns-monitor",
 		Version: version,
 		Run: func(cmd *cobra.Command, args []string) {
+			signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
 			if rootOpts.Attribution {
 				fmt.Println(attribution)
 				os.Exit(0)
@@ -83,16 +91,15 @@ var (
 			}
 			cwAPI := cloudwatch.NewFromConfig(cfg)
 			registry := prometheus.NewRegistry()
-			lo.Must0(monitor.RegisterMetrics(registry))
+			lo.Must0(monitor.RegisterMetrics(registry, rootOpts.MetricsPrefix))
 			MustStartPromMetrics(registry, rootOpts.MetricsPort)
 			dnsTest := monitor.DNSTest{
 				CW:              cwAPI,
 				Clientset:       MustGetClientset(),
 				MetricsRegistry: registry,
+				MetricsPrefix:   rootOpts.MetricsPrefix,
 			}
-			// Chaos(cfg.Region, 5)
-			concurrentTests := 5
-			jobs := make(chan struct{}, concurrentTests)
+			jobs := make(chan struct{}, rootOpts.ConcurrentTests)
 			for {
 				go func() {
 					if err := dnsTest.Run(cmd.Context()); err != nil {
@@ -102,8 +109,13 @@ var (
 					}
 					<-jobs
 				}()
-				time.Sleep(1 * time.Second)
 				jobs <- struct{}{}
+				time.Sleep(10 * time.Millisecond)
+				if isShuttingDown() {
+					time.Sleep(15 * time.Second)
+					log.Println("Shutting down!")
+					return
+				}
 			}
 		},
 	}
@@ -115,7 +127,9 @@ var attribution string
 
 func main() {
 	rootCmd.Flags().BoolVar(&rootOpts.Attribution, "attribution", false, "show attributions")
-	rootCmd.Flags().IntVar(&rootOpts.MetricsPort, "metrics-port", 8000, "port to expose prometheus /metrics")
+	rootCmd.Flags().IntVar(&rootOpts.ConcurrentTests, "concurrent-tests", envutil.WithDefaultInt("CONCURRENT_TESTS", 10), "number of test services to perform concurrently")
+	rootCmd.Flags().StringVar(&rootOpts.MetricsPrefix, "metrics-prefix", envutil.WithDefault("METRICS_PREFIX", ""), "metrics name prefix")
+	rootCmd.Flags().IntVar(&rootOpts.MetricsPort, "metrics-port", envutil.WithDefaultInt("METRICS_PORT", 8000), "port to expose prometheus /metrics")
 	rootCmd.PersistentFlags().BoolVar(&globalOpts.Verbose, "verbose", false, "Verbose output")
 	rootCmd.PersistentFlags().BoolVar(&globalOpts.Version, "version", false, "version")
 	rootCmd.PersistentFlags().StringVarP(&globalOpts.Output, "output", "o", OutputTableShort,
@@ -213,6 +227,8 @@ func MustGetClientset() *kubernetes.Clientset {
 			log.Fatalf("Unable to find in-cluster K8s config: %s\n", err)
 		}
 	}
+	k8sConfig.QPS = 1_000
+	k8sConfig.Burst = 10_000
 	clientset, err := kubernetes.NewForConfig(k8sConfig)
 	if err != nil {
 		log.Fatalf("Unable to create K8s clientset: %s", err)
@@ -250,4 +266,15 @@ func MustStartPromMetrics(registry *prometheus.Registry, port int) {
 	go func() {
 		lo.Must0(srv.ListenAndServe())
 	}()
+}
+
+func isShuttingDown() bool {
+	for {
+		select {
+		case <-exit:
+			return true
+		default:
+			return false
+		}
+	}
 }

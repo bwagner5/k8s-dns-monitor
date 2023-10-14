@@ -10,7 +10,7 @@ image:
   digest: sha256:a66ec2166d1a82f09ca2f322896b97867bca5ec47f06f1fe4f819684c0b46b9f
 
 nameOverride: ""
-fullnameOverride: ""
+fullnameOverride: "k8s-dns-monitor-coredns"
 
 serviceAccount:
   # Specifies whether a service account should be created
@@ -19,7 +19,7 @@ serviceAccount:
   annotations: {}
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
-  name: "k8s-dns-monitor"
+  name: "k8s-dns-monitor-coredns"
 
 podMonitor:
   create: true
@@ -32,7 +32,8 @@ serviceMonitor:
   # -- Endpoint configuration for the ServiceMonitor.
   endpointConfig: {}
 
-podAnnotations: {}
+podAnnotations:
+  karpenter.sh/do-not-evict: "true"
 
 podSecurityContext:
   fsGroup: 0
@@ -44,20 +45,26 @@ securityContext:
 
 resources:
   requests:
-    cpu: 200m
-    memory: 512Mi
+    cpu: 4
+    memory: 2Gi
   limits:
-    memory: 512Mi
+    cpu: 4
+    memory: 2Gi
 
 nodeSelector:
   kubernetes.io/arch: amd64
   kubernetes.io/os: linux
+  karpenter.sh/provisioner-name: coredns
 tolerations: []
 affinity: {}
 priorityClassName: ""
 metricsPort: 8000
 
 env:
+  - name: CONCURRENT_TESTS
+    value: "10"
+  - name: METRICS_PREFIX
+    value: "coredns"
   - name: PROMETHEUS_METRICS
     value: "true"
   - name: CLOUDWATCH_METRICS

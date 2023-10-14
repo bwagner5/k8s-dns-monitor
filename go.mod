@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.27.7
 	github.com/bwagner5/inflate v0.0.6
 	github.com/imdario/mergo v0.3.16
+	github.com/jaypipes/envutil v1.0.0
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/prometheus/client_golang v1.17.0
 	github.com/samber/lo v1.38.1

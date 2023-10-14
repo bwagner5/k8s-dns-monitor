@@ -1,0 +1,75 @@
+# Default values for lambda-link.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+image:
+  repository: public.ecr.aws/g4k0u1s2/k8s-dns-monitor
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: v0.0.1
+  digest: sha256:a66ec2166d1a82f09ca2f322896b97867bca5ec47f06f1fe4f819684c0b46b9f
+
+nameOverride: ""
+fullnameOverride: "k8s-dns-monitor-rpd"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: "k8s-dns-monitor-rpd"
+
+podMonitor:
+  create: true
+
+serviceMonitor:
+  # -- Specifies whether a ServiceMonitor should be created.
+  enabled: true
+  # -- Additional labels for the ServiceMonitor.
+  additionalLabels: {}
+  # -- Endpoint configuration for the ServiceMonitor.
+  endpointConfig: {}
+
+podAnnotations:
+  karpenter.sh/do-not-evict: "true"
+
+podSecurityContext:
+  fsGroup: 0
+  runAsUser: 0
+  runAsGroup: 0
+
+securityContext:
+  capabilities: {}
+
+resources:
+  requests:
+    cpu: 4
+    memory: 2Gi
+  limits:
+    cpu: 4
+    memory: 2Gi
+
+nodeSelector:
+  kubernetes.io/arch: amd64
+  kubernetes.io/os: linux
+  karpenter.sh/provisioner-name: rpd
+tolerations: []
+affinity: {}
+priorityClassName: ""
+metricsPort: 8000
+
+env:
+  - name: CONCURRENT_TESTS
+    value: "10"
+  - name: METRICS_PREFIX
+    value: "rpd"
+  - name: PROMETHEUS_METRICS
+    value: "true"
+  - name: CLOUDWATCH_METRICS
+    value: "false"
+  - name: NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName

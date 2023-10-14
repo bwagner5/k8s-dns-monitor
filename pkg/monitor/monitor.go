@@ -4,21 +4,31 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
-	"github.com/bwagner5/inflate/pkg/inflater"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 )
 
 var (
+	dnsPropagationLatencyMetricName = "dns_propagation_latency_seconds"
+	dnsPropagationLatency           prometheus.Histogram
+	loopBackIP                      = net.ParseIP("127.0.0.1")
+)
+
+func RegisterMetrics(registry prometheus.Registerer, metricPrefix string) error {
 	dnsPropagationLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name: "dns_propagation_latency_seconds",
+		Name: getDNSPropagationLatencyMetricName(metricPrefix),
 		Help: "Latency of DNS Propagation from Service Creation to Queryable (seconds)",
 		Buckets: []float64{
 			0.05, 0.10, 0.15, 0.20, 0.25, 0.50, 0.75,
@@ -38,9 +48,6 @@ var (
 			24, 25, 26, 27, 28, 29,
 		},
 	})
-)
-
-func RegisterMetrics(registry prometheus.Registerer) error {
 	for _, c := range []prometheus.Collector{dnsPropagationLatency} {
 		if err := registry.Register(c); err != nil {
 			return err
@@ -49,10 +56,18 @@ func RegisterMetrics(registry prometheus.Registerer) error {
 	return nil
 }
 
+func getDNSPropagationLatencyMetricName(metricPrefix string) string {
+	if metricPrefix != "" && !strings.HasSuffix(metricPrefix, "_") {
+		metricPrefix = fmt.Sprintf("%s_", metricPrefix)
+	}
+	return fmt.Sprintf("%s%s", metricPrefix, dnsPropagationLatencyMetricName)
+}
+
 type DNSTest struct {
 	CW              *cloudwatch.Client
 	Clientset       *kubernetes.Clientset
 	MetricsRegistry *prometheus.Registry
+	MetricsPrefix   string
 }
 
 // 1. Use Inflater to launch a service
@@ -63,39 +78,46 @@ type DNSTest struct {
 // 6. Emit a metric
 
 func (d DNSTest) Run(ctx context.Context) error {
-	inflate := inflater.New(d.Clientset)
-	inflateCollection, err := inflate.Inflate(ctx, inflater.Options{
-		RandomSuffix: true,
-		Service:      true,
-		Image:        "public.ecr.aws/eks-distro/kubernetes/pause:3.2",
-	})
+	testID := fmt.Sprintf("k8s-dns-monitor-inflate-%d", rand.Int())
+	namespace := "default"
+	mockService, err := d.Clientset.CoreV1().Services(namespace).Create(ctx, getService(testID, namespace), metav1.CreateOptions{})
 	if err != nil {
+		klog.Errorf("creating a mock service: %v", err)
 		return err
 	}
-	defer inflate.Delete(ctx, inflater.DeleteFilters{
-		Namespace: inflateCollection.Deployment.Namespace,
-		Name:      inflateCollection.Deployment.Name,
-	})
+	defer func() { d.Clientset.CoreV1().Services(namespace).Delete(ctx, mockService.Name, metav1.DeleteOptions{}) }()
+	// inflate := inflater.New(d.Clientset)
+	// inflateCollection, err := inflate.Inflate(ctx, inflater.Options{
+	// 	RandomSuffix: true,
+	// 	Service:      true,
+	// 	Image:        "602401143452.dkr.ecr.sa-east-1.amazonaws.com/eks/pause:3.5",
+	// })
+	// if err != nil {
+	// 	return err
+	// }
+	// defer inflate.Delete(ctx, inflater.DeleteFilters{
+	// 	Namespace: inflateCollection.Deployment.Namespace,
+	// 	Name:      inflateCollection.Deployment.Name,
+	// })
 
 	if err := testUntil(300*time.Second, func() error {
-		dnsQuery := fmt.Sprintf("%s.%s.svc.cluster.local", inflateCollection.Service.Name, inflateCollection.Service.Namespace)
+		dnsQuery := fmt.Sprintf("%s.%s.svc.cluster.local", mockService.Name, mockService.Namespace)
 		ips, err := net.LookupIP(dnsQuery)
-		if dnsErr, ok := lo.ErrorsAs[*net.DNSError](err); ok {
-			log.Printf("DNS Lookup Error %s (%s/%s): %v", dnsQuery, inflateCollection.Deployment.Namespace, inflateCollection.Deployment.Name, dnsErr.Err)
-		}
 		if err != nil {
 			return err
 		} else if len(ips) == 0 {
 			emptyErr := fmt.Errorf("returned empty list of IPs")
-			log.Printf("DNS Lookup Error %s (%s/%s): ", dnsQuery, inflateCollection.Deployment.Namespace, inflateCollection.Deployment.Name)
 			return emptyErr
+		} else if len(ips) == 1 && ips[0].Equal(loopBackIP) {
+			wildErr := fmt.Errorf("returned wildcard IP")
+			return wildErr
 		}
-		latency := time.Since(inflateCollection.Service.CreationTimestamp.Time).Milliseconds()
+		latency := time.Since(mockService.CreationTimestamp.Time).Milliseconds()
 		log.Printf("Successfully Received IPs for %s: %v in %dms", dnsQuery, lo.Map(ips, func(ip net.IP, _ int) string { return ip.String() }), latency)
 		return nil
 	}); err != nil {
 		if _, ok := lo.ErrorsAs[*net.DNSError](err); ok {
-			if err := d.emitMetricPropagationDelayMetric(ctx, time.Since(inflateCollection.Service.CreationTimestamp.Time)); err != nil {
+			if err := d.emitMetricPropagationDelayMetric(ctx, time.Since(mockService.CreationTimestamp.Time)); err != nil {
 				log.Fatalf("Unable to emit propagation delay metric to CloudWatch on a failure: %s", err)
 			}
 		}
@@ -103,7 +125,7 @@ func (d DNSTest) Run(ctx context.Context) error {
 	}
 
 	// Emit propagation metric
-	if err := d.emitMetricPropagationDelayMetric(ctx, time.Since(inflateCollection.Service.CreationTimestamp.Time)); err != nil {
+	if err := d.emitMetricPropagationDelayMetric(ctx, time.Since(mockService.CreationTimestamp.Time)); err != nil {
 		log.Fatalf("Unable to emit propagation delay metric to CloudWatch: %s", err)
 	}
 
@@ -118,9 +140,9 @@ func (d DNSTest) emitMetricPropagationDelayMetric(ctx context.Context, latency t
 		Namespace: aws.String("K8s-DNS-Monitor"),
 		MetricData: []types.MetricDatum{
 			{
-				MetricName: aws.String("propagation-delay"),
-				Value:      aws.Float64(float64(latency.Milliseconds())),
-				Unit:       types.StandardUnitMilliseconds,
+				MetricName: aws.String(getDNSPropagationLatencyMetricName(d.MetricsPrefix)),
+				Value:      aws.Float64(float64(latency.Seconds())),
+				Unit:       types.StandardUnitSeconds,
 			},
 		},
 	})
@@ -138,5 +160,28 @@ func testUntil(timeout time.Duration, testFN func() error) error {
 			return err
 		}
 		time.Sleep(time.Millisecond * 100)
+	}
+}
+
+func getService(name string, namespace string) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app":        name,
+				"managed-by": "k8s-dns-monitor",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": name,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Port: 8080,
+				},
+			},
+		},
 	}
 }

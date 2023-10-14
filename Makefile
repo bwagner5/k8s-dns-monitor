@@ -24,10 +24,21 @@ build: generate ## Build the controller image
 	$(eval CONTROLLER_DIGEST=$(shell echo ${CONTROLLER_IMG} | sed 's/.*k8s-dns-monitor:.*@//'))
 	echo Built ${CONTROLLER_IMG}
 
-apply: build ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
-	helm upgrade --install k8s-dns-monitor charts/k8s-dns-monitor-chart --namespace k8s-dns-monitor --create-namespace \
+apply-both: apply-coredns apply-rpd ## Apply both coredns and rpd canary
+
+apply-coredns: build ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
+	helm upgrade --install k8s-dns-monitor-coredns charts/k8s-dns-monitor-chart --namespace k8s-dns-monitor-coredns --create-namespace \
 	$(HELM_OPTS) \
-	--set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${KDM_IAM_ROLE_ARN} \
+	-f charts/k8s-dns-monitor-chart/values-coredns.yaml \
+	--set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${KDM_IAM_ROLE_ARN}-coredns \
+	--set image.repository=$(KO_DOCKER_REPO)/k8s-dns-monitor \
+	--set image.digest="$(CONTROLLER_DIGEST)"
+
+apply-rpd: build ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
+	helm upgrade --install k8s-dns-monitor-rpd charts/k8s-dns-monitor-chart --namespace k8s-dns-monitor-rpd --create-namespace \
+	$(HELM_OPTS) \
+	-f charts/k8s-dns-monitor-chart/values-rpd.yaml \
+	--set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${KDM_IAM_ROLE_ARN}-rpd \
 	--set image.repository=$(KO_DOCKER_REPO)/k8s-dns-monitor \
 	--set image.digest="$(CONTROLLER_DIGEST)"
 
